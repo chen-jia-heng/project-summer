@@ -2,9 +2,9 @@ import os
 import secrets
 import time
 
-# SM4加密算法优化实现（基于文档20250707-sm4-public.pdf）
+# SM4加密算法优化实现
 
-# SM4 S盒（文档至，输入"EF"对应输出0x84）
+# SM4 S盒
 SM4_SBOX = [
     0x16, 0x10, 0x09, 0x00, 0x3E, 0x2E, 0x23, 0x2F, 0x36, 0x38, 0x34, 0x0B, 0x08, 0x02, 0x18, 0x03,
     0xE5, 0x67, 0x9A, 0x76, 0x2A, 0x4C, 0x04, 0xCA, 0xAA, 0x44, 0x12, 0xB5, 0x19, 0x6A, 0x06, 0x99,
@@ -25,7 +25,7 @@ SM4_SBOX = [
 ]
 
 
-# 线性变换L（文档，增加截断确保32位范围）
+# 线性变换L
 def L(t):
     t = t & 0xFFFFFFFF
     res = t ^ (((t << 2) | (t >> 30)) & 0xFFFFFFFF)
@@ -35,7 +35,7 @@ def L(t):
     return res & 0xFFFFFFFF
 
 
-# 密钥扩展常量（文档引用的GM/T 0002-2012标准）
+# 密钥扩展常量
 FK = [0xA3B1BAC6, 0x56AA3350, 0x677D9197, 0xB27022DC]
 CK = [
     0x00070E15, 0x1C232A31, 0x383F464D, 0x545B6269,
@@ -48,7 +48,7 @@ CK = [
     0x10171E25, 0x2C333A41, 0x484F565D, 0x646B7279
 ]
 
-# T-Table预计算（文档至，合并L和τ变换）
+# T-Table预计算
 T_TABLE = [[0] * 256 for _ in range(4)]
 
 
@@ -69,7 +69,7 @@ def init_t_table():
 init_t_table()
 
 
-# 非线性变换τ（字节级S盒，用于缓存防护）
+# 非线性变换τ
 def tau_bytewise(a):
     a = a & 0xFFFFFFFF
     x0 = (a >> 24) & 0xFF
@@ -79,15 +79,15 @@ def tau_bytewise(a):
     return (SM4_SBOX[x0] << 24) | (SM4_SBOX[x1] << 16) | (SM4_SBOX[x2] << 8) | SM4_SBOX[x3]
 
 
-# 合成变换T（基础实现，用于非优化场景）
+# 合成变换T
 def T_basic(a):
     return L(tau_bytewise(a))
 
 
-# 密钥扩展函数（文档轮密钥生成逻辑）
+# 密钥扩展函数
 def sm4_key_expansion(key):
     if len(key) != 16:
-        raise ValueError("SM4密钥必须为16字节（文档）")
+        raise ValueError("SM4密钥必须为16字节")
     K = [int.from_bytes(key[i * 4:(i + 1) * 4], byteorder='big') & 0xFFFFFFFF for i in range(4)]
     K = [K[i] ^ FK[i] for i in range(4)]
     rk = [0] * 32
@@ -99,7 +99,7 @@ def sm4_key_expansion(key):
     return rk
 
 
-# T-Table优化的轮函数（文档）
+# T-Table优化的轮函数
 def F_ttable(X0, X1, X2, X3, rk):
     tmp = (X1 ^ X2 ^ X3 ^ rk) & 0xFFFFFFFF
     # 查表替代τ+L变换
@@ -110,25 +110,25 @@ def F_ttable(X0, X1, X2, X3, rk):
     return (X0 ^ t) & 0xFFFFFFFF
 
 
-# 基础轮函数（用于非优化场景）
+# 基础轮函数
 def F_basic(X0, X1, X2, X3, rk):
     return (X0 ^ T_basic(X1 ^ X2 ^ X3 ^ rk)) & 0xFFFFFFFF
 
 
-# 优化加密函数（T-Table+缓存防护，参考文档OpenSSL方式）
+# 优化加密函数（T-Table+缓存防护）
 def sm4_encrypt_optimized(plaintext, key, rk=None):
     if len(plaintext) != 16:
-        raise ValueError("SM4明文块必须为16字节（文档）")
+        raise ValueError("SM4明文块必须为16字节")
     if rk is None:
         rk = sm4_key_expansion(key)
 
     # 初始状态转换
     state = [int.from_bytes(plaintext[i * 4:(i + 1) * 4], byteorder='big') & 0xFFFFFFFF for i in range(4)]
 
-    # 第一轮使用字节级S盒防护缓存攻击（文档）
+    # 第一轮使用字节级S盒防护缓存攻击
     state = [tau_bytewise(x) for x in state]
 
-    # 32轮迭代（文档），使用T-Table优化
+    # 32轮迭代，使用T-Table优化
     for i in range(32):
         state = [
             state[1],
@@ -137,10 +137,10 @@ def sm4_encrypt_optimized(plaintext, key, rk=None):
             F_ttable(state[0], state[1], state[2], state[3], rk[i])
         ]
 
-    # 最后一轮使用字节级S盒防护缓存攻击（文档）
+    # 最后一轮使用字节级S盒防护缓存攻击
     state = [tau_bytewise(x) for x in state]
 
-    # 最终交换（文档轮函数结构）
+    # 最终交换（轮函数结构）
     state = [state[3], state[2], state[1], state[0]]
 
     return b''.join([x.to_bytes(4, byteorder='big') for x in state])
